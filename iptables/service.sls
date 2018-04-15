@@ -13,10 +13,11 @@
   {% set firewall = salt['pillar.get']('firewall', {}) %}
   {% set install = firewall.get('install', False) %}
   {% set strict_mode = firewall.get('strict', False) %}
+  {% set ipv6_en = firewall.get('ipv6_enable', False) %}
   {% set global_block_nomatch = firewall.get('block_nomatch', False) %}
 
   # Generate ipsets for all services that we have information about
-  {%- for service_name, service_details in pfirewall.get('services', {}).items() %}  
+  {%- for service_name, service_details in pfirewall.get('services', {}).items() %}
     {% set block_nomatch = service_details.get('block_nomatch', False) %}
     {% set interfaces = service_details.get('interfaces','') %}
     {% set protos = service_details.get('protos',['tcp']) %}
@@ -28,6 +29,7 @@
 
     # Allow rules for ips/subnets
     {%- for ip in service_details.get('ips_allow',{}) %}
+      {%- set ip_fam='ipv4' if (ipv6_en and (ip | regex_match('.*:')) is none) else 'ipv6' %}
       {%- if interfaces == '' %}
         {%- for proto in protos %}
 .iptables_{{sls_params.parent}}_{{service_name}}_allow_{{ip}}_{{proto}}:
@@ -35,6 +37,7 @@
     - table: filter
     - chain: INPUT
     - jump: ACCEPT
+    - family: {{ ip_fam }}
     - source: {{ ip }}
     - dport: {{ service_name }}
     - proto: {{ proto }}
@@ -49,6 +52,7 @@
     - table: filter
     - chain: INPUT
     - jump: ACCEPT
+    - family: {{ ip_fam }}
     - source: {{ ip }}
     - dport: {{ service_name }}
     - proto: {{ proto }}
@@ -74,26 +78,17 @@
     - proto: {{ proto }}
     - save: True
     {{ comment }}
-        {%- endfor %}
-      {%- else %}
-        {%- for interface in interfaces%}
-          {%- for proto in protos %}
-.iptables_{{sls_params.parent}}_{{service_name}}_deny_other_{{proto}}_{{interface}}:
+          {% if ipv6_en %}
+.iptables_{{sls_params.parent}}_{{service_name}}_deny_other_{{proto}}:
   iptables.append:
     - position: last
     - table: filter
     - chain: INPUT
     - jump: REJECT
-    - i: {{ interface }}
     - dport: {{ service_name }}
     - proto: {{ proto }}
+    - family: ipv6
     - save: True
     {{ comment }}
-          {%- endfor %}
-        {%- endfor %}
-      {%- endif %}
-    {%- endif %}    
-
-  {%- endfor %}
-{%- endif %}
-{%- endif %}
+          {% endif %}
+        {%- endf

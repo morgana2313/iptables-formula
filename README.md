@@ -18,6 +18,8 @@ firewall:
   enabled: True
   install: True  
   strict: True
+  ipv6_enable: True
+  initial_flush: True
 ```
 
 Allow SSH:
@@ -30,6 +32,7 @@ firewall:
       ips_allow:
         - 192.168.0.0/24
         - 10.0.2.2/32
+        - 1234:4567::
 ```
 
 Apply rules to specific interface:
@@ -59,6 +62,8 @@ Allow an entire class such as your internal network:
     networks:
       ips_allow:
         - 10.0.0.0/8
+        - 1234:4567::
+
 ```
 
 Salt combines both and effectively enables your firewall and applies the rules.
@@ -105,11 +110,4 @@ You can use nat for interface.
 
 ```
   #Support nat
-  # iptables -t nat -A POSTROUTING -o eth0 -s 192.168.18.0/24 -d 10.20.0.2 -j MASQUERADE
-
-  nat:
-    eth0:
-      rules:
-        '192.168.18.0/24':
-          - 10.20.0.2
-```
+  # iptables -t nat -A POSTROUTING -o eth0 -s 192.168.18.0/24 -d 10.20.0.2 -j MASQUERA

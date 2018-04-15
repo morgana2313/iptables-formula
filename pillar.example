@@ -2,12 +2,16 @@ firewall:
   install: True
   enabled: True
   strict: True
+  ipv6_enable: True
+  initial_flush: True
   services:
     ssh:
       block_nomatch: False
       ips_allow:
         - 192.168.0.0/24
         - 10.0.2.2/32
+        - 1234:4567::
+
     http:
       block_nomatch: False
       protos:
@@ -34,6 +38,3 @@ firewall:
       rules:
         '192.168.18.0/24':
           - 10.20.0.2
-        '192.168.18.0/24':
-          - 172.31.0.2
-          - 10.0.0.0/8
