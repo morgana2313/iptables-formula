@@ -75,7 +75,7 @@
       {% endif %}
 
       # Allow related/established sessions
-      iptables_allow_established:
+      iptables_allow_established_in:
         iptables.append:
           - table: filter
           - chain: INPUT
@@ -86,7 +86,7 @@
           - require:
             - iptables_initial_flush
       {% if ipv6_en %}
-      iptables_allow_established_v6:
+      iptables_allow_established_in_v6:
         iptables.append:
           - table: filter
           - chain: INPUT
@@ -100,7 +100,7 @@
       {% endif %}
 
       # Set the policy to deny everything unless defined
-      enable_reject_policy:
+      enable_reject_policy_in:
         iptables.set_policy:
           - table: filter
           - chain: INPUT
@@ -108,9 +108,9 @@
           - save: True
           - require:
             - iptables: iptables_allow_localhost
-            - iptables: iptables_allow_established
+            - iptables: iptables_allow_established_in
       {% if ipv6_en %}
-      enable_reject_policy_v6:
+      enable_reject_policy_in_v6:
         iptables.set_policy:
           - table: filter
           - chain: INPUT
@@ -118,10 +118,60 @@
           - family: ipv6
           - save: True
           - require:
-            - iptables: iptables_allow_localhost
-            - iptables: iptables_allow_established
+            - iptables: iptables_allow_localhost_v6
+            - iptables: iptables_allow_established_in_v6
       {% endif %}
-    {%- endif %}
+
+## FORWARD
+      iptables_allow_established_fw:
+        iptables.append:
+          - table: filter
+          - chain: FORWARD
+          - jump: ACCEPT
+          - match: conntrack
+          - ctstate: 'RELATED,ESTABLISHED'
+          - save: True
+          - require:
+            - iptables_initial_flush
+      {% if ipv6_en %}
+      iptables_allow_established_fw_v6:
+        iptables.append:
+          - table: filter
+          - chain: FORWARD
+          - jump: ACCEPT
+          - match: conntrack
+          - ctstate: 'RELATED,ESTABLISHED'
+          - family: ipv6
+          - save: True
+          - require:
+            - iptables_initial_flush
+      {% endif %}
+
+      # Set the policy to deny everything unless defined
+      enable_reject_policy_fw:
+        iptables.set_policy:
+          - table: filter
+          - chain: FORWARD
+          - policy: DROP
+          - save: True
+          - require:
+            - iptables: iptables_allow_localhost
+            - iptables: iptables_allow_established_in
+      {% if ipv6_en %}
+      enable_reject_policy_in_fw:
+        iptables.set_policy:
+          - table: filter
+          - chain: FORWARD
+          - policy: DROP
+          - family: ipv6
+          - save: True
+          - require:
+            - iptables: iptables_allow_localhost_v6
+            - iptables: iptables_allow_established_in_v6
+      {% endif %}
+
+
+    {%- endif %} # strict_mode
 
   # Generate ipsets for all services that we have information about
   {%- for service_name, service_details in firewall.get('services', {}).items() %}
@@ -136,7 +186,7 @@
 
     # Allow rules for ips/subnets
     {%- for ip in service_details.get('ips_allow', []) %}
-      {%- set ip_fam='ipv4' if (ipv6_en and (ip | regex_match('.*:')) is none) else 'ipv6' %}
+      {%- set ip_fam='ipv4'  if ipv6_en and (ip | regex_match('.*:')) is none else 'ipv6' %}
       {%- if interfaces == '' %}
         {%- for proto in protos %}
       iptables_{{service_name}}_allow_{{ip}}_{{proto}}:
@@ -153,9 +203,122 @@
             - iptables_initial_flush
           {{ comment }}
         {%- endfor %}
-      {%- else %}
+          {%- else %}
         {%- for interface in interfaces %}
           {%- for proto in protos %}
       iptables_{{service_name}}_allow_{{ip}}_{{proto}}_{{interface}}:
         iptables.append:
           - table: filter
+          - chain: INPUT
+          - jump: ACCEPT
+          - i: {{ interface }}
+          - family: {{ ip_fam }}
+          - source: {{ ip }}
+          - dport: {{ service_name }}
+          - proto: {{ proto }}
+          - save: True
+          {{ comment }}
+          {%- endfor %}
+        {%- endfor %}
+      {%- endif %}
+    {%- endfor %}
+
+    {%- if not strict_mode and global_block_nomatch or block_nomatch %}
+      # If strict mode is disabled we may want to block anything else
+      {%- if interfaces == '' %}
+        {%- for proto in protos %}
+      iptables_{{service_name}}_deny_other_{{proto}}:
+        iptables.append:
+          - position: last
+          - table: filter
+          - chain: INPUT
+          - jump: REJECT
+          - dport: {{ service_name }}
+          - proto: {{ proto }}
+          - save: True
+          {{ comment }}
+          {% if ipv6_en %}
+      iptables_{{service_name}}_deny_other_{{proto}}:
+        iptables.append:
+          - position: last
+          - table: filter
+          - chain: INPUT
+          - jump: REJECT
+          - dport: {{ service_name }}
+          - proto: {{ proto }}
+          - family: ipv6
+          - save: True
+          {{ comment }}
+          {% endif %}
+        {%- endfor %}
+      {%- else %}
+        {%- for interface in interfaces %}
+          {%- for proto in protos %}
+      iptables_{{service_name}}_deny_other_{{proto}}_{{interface}}:
+        iptables.append:
+          - position: last
+          - table: filter
+          - chain: INPUT
+          - jump: REJECT
+          - i: {{ interface }}
+          - dport: {{ service_name }}
+          - proto: {{ proto }}
+          - save: True
+          {{ comment }}
+          {% if ipv6_en %}
+      iptables_{{service_name}}_deny_other_{{proto}}_{{interface}}:
+        iptables.append:
+          - position: last
+          - table: filter
+          - chain: INPUT
+          - jump: REJECT
+          - i: {{ interface }}
+          - dport: {{ service_name }}
+          - proto: {{ proto }}
+          - family: ipv6
+          - save: True
+          {{ comment }}
+          {% endif %}
+          {%- endfor %}
+        {%- endfor %}
+      {%- endif %}
+
+    {%- endif %}
+
+  {%- endfor %}
+
+  # Generate rules for NAT
+  {%- for service_name, service_details in firewall.get('nat', {}).items() %}
+    {%- for ip_s, ip_ds in service_details.get('rules', {}).items() %}
+      {%- set ip_fam='ipv4'  if ipv6_en and (ip_s | regex_match('.*:')) is none else 'ipv6' %}
+      {%- for ip_d in ip_ds %}
+      iptables_{{service_name}}_allow_{{ip_s}}_{{ip_d}}:
+        iptables.append:
+          - table: nat
+          - chain: POSTROUTING
+          - jump: MASQUERADE
+          - o: {{ service_name }}
+          - family: {{ ip_fam }}
+          - source: {{ ip_s }}
+          - destination: {{ ip_d }}
+          - save: True
+      {%- endfor %}
+    {%- endfor %}
+  {%- endfor %}
+
+  # Generate rules for whitelisting IP classes
+  {%- for service_name, service_details in firewall.get('whitelist', {}).items() %}
+    {%- for ip in service_details.get('ips_allow', []) %}
+      {%- set ip_fam='ipv4'  if ipv6_en and (ip | regex_match('.*:')) is none else 'ipv6' %}
+      iptables_{{service_name}}_allow_{{ip}}:
+        iptables.append:
+           - table: filter
+           - chain: INPUT
+           - jump: ACCEPT
+           - family: {{ ip_fam }}
+           - source: {{ ip }}
+           - save: True
+    {%- endfor %}
+  {%- endfor %}
+
+{%- endif %}
